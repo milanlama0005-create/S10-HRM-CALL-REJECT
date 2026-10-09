@@ -1,22 +1,154 @@
-<?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
-```
-<uses-permission android:name="android.permission.READ_PHONE_STATE" />
-<uses-permission android:name="android.permission.ANSWER_PHONE_CALLS" />
-```
-    <application
-        android:allowBackup="false"
-        android:label="S10 HRM Call Reject"
-        android:theme="@android:style/Theme.Material.Light.NoActionBar">
+package com.example.s10hrmcallreject
 
-        <activity
-            android:name=".MainActivity"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
+import android.Manifest
+import android.app.Activity
+import android.content.pm.PackageManager
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
+import android.os.Bundle
+import android.telecom.TelecomManager
+import android.view.Gravity
+import android.widget.LinearLayout
+import android.widget.TextView
+import android.widget.Toast
 
-    </application>
-</manifest>
+class MainActivity : Activity(), SensorEventListener {
+
+    private lateinit var sensorManager: SensorManager
+    private lateinit var status: TextView
+    private var upsideDown = false
+
+    companion object {
+        private const val CALL_PERMISSION_REQUEST = 100
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        val layout = LinearLayout(this)
+        layout.orientation = LinearLayout.VERTICAL
+        layout.gravity = Gravity.CENTER
+        layout.setPadding(28, 28, 28, 28)
+
+        val title = TextView(this)
+        title.text = "S10 HRM Call Reject"
+        title.textSize = 24f
+        title.gravity = Gravity.CENTER
+
+        status = TextView(this)
+        status.textSize = 18f
+        status.gravity = Gravity.CENTER
+        status.text = "Sensor starting..."
+
+        layout.addView(title)
+        layout.addView(status)
+        setContentView(layout)
+
+        sensorManager =
+            getSystemService(SENSOR_SERVICE) as SensorManager
+
+        val accelerometer =
+            sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+
+        if (accelerometer != null) {
+            sensorManager.registerListener(
+                this,
+                accelerometer,
+                SensorManager.SENSOR_DELAY_NORMAL
+            )
+            status.text = "Sensor ready. Turn phone upside down."
+        } else {
+            status.text = "Accelerometer not available."
+        }
+
+        if (android.os.Build.VERSION.SDK_INT >= 26 &&
+            checkSelfPermission(Manifest.permission.ANSWER_PHONE_CALLS)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(
+                arrayOf(Manifest.permission.ANSWER_PHONE_CALLS),
+                CALL_PERMISSION_REQUEST
+            )
+        }
+    }
+
+    override fun onSensorChanged(event: SensorEvent?) {
+        if (event == null ||
+            event.sensor.type != Sensor.TYPE_ACCELEROMETER
+        ) return
+
+        val nowUpsideDown = event.values[2] < -7.0f
+
+        if (nowUpsideDown && !upsideDown) {
+            status.text = "Phone upside down detected"
+            tryRejectCall()
+        } else if (!nowUpsideDown && upsideDown) {
+            status.text = "Phone position normal"
+        }
+
+        upsideDown = nowUpsideDown
+    }
+
+    private fun tryRejectCall() {
+        if (checkSelfPermission(Manifest.permission.ANSWER_PHONE_CALLS)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            Toast.makeText(
+                this,
+                "Call permission not granted",
+                Toast.LENGTH_SHORT
+            ).show()
+            return
+        }
+
+        try {
+            val telecom =
+                getSystemService(TELECOM_SERVICE) as TelecomManager
+
+            val rejected = telecom.endCall()
+
+            status.text = if (rejected) {
+                "Call rejected"
+            } else {
+                "No rejectable call detected"
+            }
+        } catch (e: SecurityException) {
+            status.text = "Android blocked call control"
+        } catch (e: Exception) {
+            status.text = "Call control unavailable"
+        }
+    }
+
+    override fun onAccuracyChanged(
+        sensor: Sensor?,
+        accuracy: Int
+    ) {
+    }
+
+    override fun onResume() {
+        super.onResume()
+        val accelerometer =
+            if (::sensorManager.isInitialized) {
+                sensorManager.getDefaultSensor(
+                    Sensor.TYPE_ACCELEROMETER
+                )
+            } else null
+
+        if (accelerometer != null) {
+            sensorManager.registerListener(
+                this,
+                accelerometer,
+                SensorManager.SENSOR_DELAY_NORMAL
+            )
+        }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        if (::sensorManager.isInitialized) {
+            sensorManager.unregisterListener(this)
+        }
+    }
+}
